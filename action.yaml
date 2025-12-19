@@ -13,6 +13,12 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Install python
+      shell: bash
+      run: |
+        apt-get update -y
+        apt-get install python3 python3-pip -y
+        python3 -m pip install pyyaml --break-system-packages
     - uses: azure/setup-helm@v4.3.0
     - uses: chrisdickinson/setup-yq@latest
     - uses: actions/setup-go@v6
@@ -26,12 +32,6 @@ runs:
       shell: bash
       run: |
         go install github.com/yannh/kubeconform/cmd/kubeconform@latest
-    - name: Install python
-      shell: bash
-      run: |
-        apt-get update -y
-        apt-get install python3 python3-pip -y
-        python3 -m pip install pyyaml --break-system-packages
     - name: Run hellbound
       shell: bash
       run: |
