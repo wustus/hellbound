@@ -1,0 +1,51 @@
+name: hellbound
+description: "Template, Lint and Verify Helm Chart"
+inputs:
+  path:
+    description: "Path to Helm Chart"
+    required: true
+  values:
+    description: "Values Files"
+    required: false
+  verbose:
+    description: "Verbose Output"
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - uses: azure/setup-helm@v4.3.0
+    - uses: chrisdickinson/setup-yq@latest
+    - uses: actions/setup-go@v6
+      with:
+        go-version: 1.25.5
+    - name: Install kube-linter
+      shell: bash
+      run: |
+        go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest
+    - name: Install kube-conform
+      shell: bash
+      run: |
+        go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+    - uses: actions/setup-python@v6
+      with:
+        python-version: 3.14
+    - name: Install pyyaml
+      shell: bash
+      run: |
+        pip3 install pyyaml
+    - name: Run hellbound
+      shell: bash
+      run: |
+        set -euo pipefail
+        chmod +x "${{ github.action_path }}/hellbound"
+        argv=("${{ inputs.path }}")
+        if [[ -n "${{ inputs.values }}" ]]; then
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            argv+=("-f" "${{ inputs.path }}/$f")
+          done <<< "$(printf "%s" ${{ inputs.values }} | tr " " "\n")"
+        fi
+        if [[ "${{ inputs.verbose }}" == "true" ]]; then
+          argv+=("--verbose")
+        fi
+        "${{ github.action_path }}/hellbound" "${argv[@]}"
