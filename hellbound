@@ -59,7 +59,7 @@ print_error() {
 
 # format kube-linter output into more readable form
 print_linter_err() {
-  $yq_missing && cat "$tmpdir/linter_err" || cat "$tmpdir/linter_err" | yq -r '
+  $yq_missing && cat "$tmpdir/linter_err" || cat "$tmpdir/linter_err" | yq -e '
     .Reports[]
     | . as $root
     | .Object.K8sObject as $obj
@@ -74,7 +74,7 @@ print_linter_err() {
 }
 
 print_conform_err() {
-  $yq_missing && cat "$tmpdir/conform_err" || cat "$tmpdir/conform_err" | yq -r '
+  $yq_missing && cat "$tmpdir/conform_err" || cat "$tmpdir/conform_err" | yq -e '
     .resources[]
     | [
         "\(.version)/\(.kind) - \(.name):",
