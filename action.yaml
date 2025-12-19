@@ -26,6 +26,10 @@ runs:
       shell: bash
       run: |
         go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+    - name: Install python
+      shell: bash
+      run: |
+        apt-get update && apt-get install python3
     - name: Install pyyaml
       shell: bash
       run: |
