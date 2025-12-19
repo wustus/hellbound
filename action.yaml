@@ -28,7 +28,7 @@ runs:
         go install github.com/yannh/kubeconform/cmd/kubeconform@latest
     - uses: actions/setup-python@v6
       with:
-        python-version: 3.14
+        python-version: 3.13
     - name: Install pyyaml
       shell: bash
       run: |
