@@ -26,14 +26,10 @@ runs:
       shell: bash
       run: |
         go install github.com/yannh/kubeconform/cmd/kubeconform@latest
-    - name: Install python
-      shell: bash
-      run: |
-        apt-get update && apt-get install python3
     - name: Install pyyaml
       shell: bash
       run: |
-        pip3 install pyyaml --break-system-packages
+        python3 -m pip install pyyaml --break-system-packages
     - name: Run hellbound
       shell: bash
       run: |
