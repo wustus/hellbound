@@ -1,0 +1,213 @@
+#!/bin/bash
+
+# This is hellbound, an amalgamation of various tools to check, verify and lint Helm Charts.
+# All the glory goes to:
+#  - [helm](https://github.com/helm/helm)
+#  - [yq](https://github.com/mikefarah/yq)
+#  - [kube-linter](https://github.com/stackrox/kube-linter)
+#  - [kubeconform](https://github.com/yannh/kubeconform)
+#  - [python](https://www.python.org)
+#    * [pyyaml](https://github.com/yaml/pyyaml)
+
+set -euo pipefail
+
+script_dir="$(dirname $0)"
+tmpdir=$(mktemp -d)
+trap "rm -rf $tmpdir" EXIT
+
+GREEN="\033[32m"
+YELLOW="\033[33m"
+RED="\033[31m"
+GRAY="\033[90m"
+WHITE="\033[0m"
+
+verbose=false
+schemas=false
+config_path=""
+
+# missing dependencies
+yq_missing=false
+kube_linter_missing=false
+kubeconform_missing=false
+
+# checks
+template_ok=false
+lint_ok=false
+conform_ok=false
+
+print_help() {
+  echo "An amalgamation of a variety of tools to check, verify and lint Helm Charts."
+  echo ""
+  echo "Usage: hellbound <path> -f <values file>"
+  echo "  <path> - the path to the Helm Chart (default: .)"
+  echo ""
+  echo "  -f|--file - the Helm value file to pass (default: values.yaml)"
+  echo "  -c|--config - path to config file."
+  echo "  -k|--ignore-missing - ignore missing dependencies (except for helm)"
+  echo "  -v|--verbose - print errors (default: false)"
+  echo "  -h|--help - show this help."
+}
+
+check_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+print_error() {
+  printf "${RED}Error:${WHITE} $1\n" >&2
+  exit 1
+}
+
+# format kube-linter output into more readable form
+print_linter_err() {
+  $yq_missing && cat "$tmpdir/linter_err" || cat "$tmpdir/linter_err" | yq -r '
+    .Reports[]
+    | . as $root
+    | .Object.K8sObject as $obj
+    | $obj.GroupVersionKind as $gvk
+    | [
+        "\($gvk.Group)/\($gvk.Version)/\($gvk.Kind) (\($obj.Namespace)/\($obj.Name)):",
+        "  Check: \($root.Check)",
+        "  Message: \($root.Diagnostic.Message)",
+        "  Remediation: \($root.Remediation)\n"
+      ]
+    | join("\n")'
+}
+
+print_conform_err() {
+  $yq_missing && cat "$tmpdir/conform_err" || cat "$tmpdir/conform_err" | yq -r '
+    .resources[]
+    | [
+        "\(.version)/\(.kind) - \(.name):",
+        "  Message: \(.msg)\n"
+      ]
+    | join("\n")'
+}
+
+print_check() {
+  ok=$1
+  msg=$2
+  $ok && printf "  ${GREEN}[x]" || printf "  ${RED}[ ]"
+  printf " - $msg\n${WHITE}"
+}
+
+print_result() {
+  echo "hellbound:"
+  print_check $template_ok "Helm Template"
+  print_check $lint_ok "Kube Linter"
+  print_check $conform_ok "Kube Conform"
+
+  # print error
+  $verbose && {
+    ! $template_ok && cat "$tmpdir/template_err" && exit 1;
+    ! $lint_ok && print_linter_err && exit 1;
+    ! $conform_ok && print_conform_err &&  exit 1;
+  }
+
+  $template_ok && ($kube_linter_missing || $lint_ok) && ($kubeconform_missing || $conform_ok) || exit 1
+}
+
+get_schemas() {
+  mkdir -p "$script_dir/schemas"
+  while IFS=; read -r url; do
+    schemas=true
+    grep -q "$url" "$script_dir/schemas/.sources" && continue
+    $verbose && echo "Getting Schema $url..."
+    while IFS=; read -r outfile; do
+      IFS="_" read -r group kind version <<< "$outfile"
+      mkdir -p "$script_dir/schemas/$group/"
+      mv "$outfile" "$script_dir/schemas/$group/"
+    done < <(FILENAME_FORMAT="{fullgroup}_{kind}_{version}" \
+      python3 "$script_dir/scripts/openapi2jsonschema.py" "$url" \
+      | grep .json \
+      | cut -d ' ' -f5
+    )
+    echo "$url" >> "$script_dir/schemas/.sources"
+  done < <(yq -re '.crdSchemas[]' "$config_path" 2> /dev/null)
+}
+
+## Parse Flags
+args=()
+ctx="."
+ignore_missing=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help)
+      print_help
+      exit 0
+      ;;
+    -c | --config)
+      config_path="$2"
+      shift 2
+      ;;
+    -f | --file)
+      file="$2"
+      args+=(-f "$file")
+      shift 2
+      ;;
+    -k | --ignore-missing)
+      ignore_missing=true
+      shift
+      ;;
+    -v | --verbose)
+      verbose=true
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      ctx="$1"
+      shift
+      ;;
+  esac
+done
+
+## Check Dependencies
+! check_cmd helm && print_error "required command helm not found in path."
+! check_cmd yq && {
+  $ignore_missing || print_error "required command yq not found in path."
+  yq_missing=true
+}
+! check_cmd kube-linter && {
+  $ignore_missing || print_error "required command kube-linter not found in path."
+  kube_linter_missing=true
+}
+! check_cmd kubeconform && {
+  $ignore_missing || print_error "required command kubeconform not found in path."
+  kubeconform_missing=true
+}
+
+## helm template
+helm template test "$ctx" ${args[@]} > "$tmpdir/template.yaml" 2> "$tmpdir/template_err" || print_result
+template_ok=true
+
+## kube-linter
+! $kube_linter_missing && {
+  args=()
+  # format output as json only if we can parse it
+  $yq_missing || args+=(--format json)
+  # pass config
+  [ -n "$config_path" ] && args+=(--config ${config_path})
+  kube-linter lint "$tmpdir/template.yaml" ${args[@]} > "$tmpdir/linter_err" 2> /dev/null || print_result
+  lint_ok=true
+}
+
+## kube-linter
+! $kubeconform_missing && {
+  # need yq and config to get schemas
+  ! $yq_missing && [[ -n "$config_path" ]]  && get_schemas
+  args=(
+    -schema-location default \
+    -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+    -schema-location "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/{{.NormalizedKubernetesVersion}}/{{.ResourceKind}}.json"
+  )
+  # add schemas if necessary
+  $schemas && args+=(-schema-location "$script_dir/schemas/{{.Group}}/{{.Group}}_{{.ResourceKind}}_{{.ResourceAPIVersion}}.json")
+  # format output as json only if we can parse it
+  $yq_missing || args+=(-output json)
+  kubeconform ${args[@]} "$tmpdir/template.yaml" > "$tmpdir/conform_err" 2> /dev/null || print_result
+  conform_ok=true
+}
+
+print_result
