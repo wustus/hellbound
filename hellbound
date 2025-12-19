@@ -163,6 +163,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[ ${#args[@]} == 0 ] && args=(-f values.yaml)
+
 ## Check Dependencies
 ! check_cmd helm && print_error "required command helm not found in path."
 ! check_cmd yq && {
@@ -179,6 +181,7 @@ done
 }
 
 ## helm template
+helm dep update "$ctx" 2> /dev/null
 helm template test "$ctx" ${args[@]} > "$tmpdir/template.yaml" 2> "$tmpdir/template_err" || print_result
 template_ok=true
 
