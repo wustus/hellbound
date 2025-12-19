@@ -2,6 +2,19 @@
 
 An amalgamation of a variety of tools to check, verify and lint Helm Charts.
 
+## Action
+
+`hellbound` can be integrated into your CI. Configuration is limited to my personal use-case at the moment.
+```yaml
+- uses: wustus/hellbound@v1
+  with:
+    path: charts/external-dns
+    values: |
+      values.yaml 
+      secrets.yaml
+    verbose: "true"
+```
+
 ## Dependencies
 
 This tool is only supposed to merge some useful projects into one incestuous script. The useful parts stem from the following tools (in calling-order):
